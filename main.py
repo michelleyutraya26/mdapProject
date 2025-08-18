@@ -1,27 +1,50 @@
-import spacy
-import sklearn
+from pathlib import Path
+from itertools import islice
+from text_processing import preprocess
+from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
-import pandas as pd
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
+from sklearn.cluster import MiniBatchKMeans
+import matplotlib.pyplot as plt
 
+data_dir = Path("data/determinations")
+n_docs = 50  # bump to None for all docs after testing
 
-# Load English tokenizer, tagger, parse and NER
-nlp = spacy.load("en_core_web_sm")
+file_names = []
+raw_texts = []
 
-# Process documents
-text = ("When Sebastian Thrun started working on self-driving cars at "
-        "Google in 2007, few people outside of the company took him "
-        "seriously. “I can tell you very senior CEOs of major American "
-        "car companies would shake my hand and turn away because I wasn’t "
-        "worth talking to,” said Thrun, in an interview with Recode earlier "
-        "this week.")
-doc = nlp(text)
+for p in islice(sorted(data_dir.glob("*.txt")), n_docs):
+    text = p.read_text(encoding="utf-8", errors="ignore")
+    tokens = preprocess(text)             # now fast (tokenizer-only)
+    if tokens:
+        file_names.append(p.name)
+        raw_texts.append(" ".join(tokens))  # join tokens to string
 
-# 1. Tokenization
-for token in doc:
-        print(token.text, token.pos_, token.dep_)
+print(f"Preprocessed {len(raw_texts)} files.")
 
-# Named Entity Recognition
-for ent in doc.ents:
-        print(ent.text, ent.label_)
+vectorizer = TfidfVectorizer(
+    lowercase=True,
+    stop_words="english",
+    ngram_range=(1, 1),      # try (1,2) later
+    min_df=10,
+    max_df=0.5,
+    max_features=30000,
+    dtype=np.float32,
+)
+X = vectorizer.fit_transform(raw_texts)
+print("TF-IDF shape:", X.shape)
+
+Ks = range(5, 31, 5)
+inertias = []
+for k in Ks:
+    km = MiniBatchKMeans(n_clusters=k, n_init=5, batch_size=2048, random_state=42)
+    km.fit(X)
+    inertias.append(km.inertia_)
+
+plt.figure()
+plt.plot(list(Ks), inertias, marker="o")
+plt.xlabel("k (clusters)")
+plt.ylabel("SSE (inertia)")
+plt.title("Elbow Method (TF-IDF + MiniBatchKMeans)")
+plt.savefig("elbow_plot.png", dpi=300, bbox_inches="tight")
+plt.close()
+print("Saved elbow plot to elbow_plot.png")
